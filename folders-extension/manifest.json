@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "Mothership Companion Folders",
+  "version": "0.1.0",
+  "description": "Group your Mothership Companion characters into folders.",
+  "permissions": [
+    "storage"
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://mothershipcompanion.com/*",
+        "https://www.mothershipcompanion.com/*"
+      ],
+      "js": [
+        "src/hook.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://mothershipcompanion.com/*",
+        "https://www.mothershipcompanion.com/*"
+      ],
+      "js": [
+        "src/store.js",
+        "src/opener.js",
+        "src/panel.js"
+      ],
+      "run_at": "document_start"
+    }
+  ]
+}

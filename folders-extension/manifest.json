@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Mothership Companion Folders",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Group your Mothership Companion characters into folders.",
   "permissions": [
     "storage"

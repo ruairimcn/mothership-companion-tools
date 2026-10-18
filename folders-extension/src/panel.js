@@ -107,7 +107,10 @@
       position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 2147483647;
       max-width: min(420px, calc(100vw - 32px)); background: #000; color: #fff; padding: 10px 14px;
       border-radius: 10px; font-size: 13px; box-shadow: 0 4px 16px rgba(0,0,0,.3);
+      display: flex; align-items: center; gap: 12px;
     }
+    .toast-action { flex: none; border: 1px solid #fff; border-radius: 6px; background: none; color: #fff; padding: 4px 8px; font-size: 12px; font-weight: 700; }
+    .toast-action:hover { background: #fff; color: #000; }
     @media (prefers-reduced-motion: reduce) { .drawer, .caret { transition: none; } }
   `;
 
@@ -126,10 +129,12 @@
     .forEach((type) => host.addEventListener(type, (e) => e.stopPropagation()));
 
   let toastTimer;
-  const toast = (text) => {
+  const toast = (text, action = null) => {
     clearTimeout(toastTimer);
-    toastSlot.replaceChildren(h('div', { class: 'toast', role: 'status' }, text));
-    toastTimer = setTimeout(() => toastSlot.replaceChildren(), 4500);
+    toastSlot.replaceChildren(h('div', { class: 'toast', role: 'status' },
+      h('span', {}, text),
+      action && h('button', { class: 'toast-action', onClick: action.run }, action.label)));
+    toastTimer = setTimeout(() => toastSlot.replaceChildren(), action ? 12000 : 4500);
   };
 
   const setOpen = (open) => {
@@ -189,7 +194,29 @@
 
   const openCharacter = async (c) => {
     const result = await opener.openCharacter(c.name);
-    if (!result.ok) toast(result.reason);
+    if (!result.ok) {
+      toast(result.reason, result.details && {
+        label: 'Copy details',
+        run: () => copyText(result.details).then(
+          () => toast('Details copied. Paste them into your bug report.'),
+          () => toast("Couldn't copy. Try again, or press Ctrl+C after selecting the text.")),
+      });
+    }
+  };
+
+  const copyText = async (text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Fall back to the legacy copy command if the async API is refused.
+      const area = h('textarea', { style: 'position:fixed;opacity:0' });
+      area.value = text;
+      root.append(area);
+      area.select();
+      const ok = document.execCommand('copy');
+      area.remove();
+      if (!ok) throw new Error('copy failed');
+    }
   };
 
   const moveSelect = (c, currentFolderId) => {

@@ -9,46 +9,101 @@
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  const semanticsRoot = () => document.querySelector('flutter-view') || document.body;
+  const TAPPABLE = '[flt-tappable], [role="button"], [role="link"], [role="menuitem"], [role="tab"]';
 
-  const semanticsEnabled = () => !!semanticsRoot().querySelector('flt-semantics');
+  // The semantics tree normally lives in the light DOM, but look inside the
+  // Flutter view's shadow root too in case a future engine moves it there.
+  const semanticsNodes = () => {
+    const nodes = [...document.querySelectorAll('flt-semantics')];
+    for (const host of document.querySelectorAll('flutter-view, flt-glass-pane')) {
+      if (host.shadowRoot) nodes.push(...host.shadowRoot.querySelectorAll('flt-semantics'));
+    }
+    return nodes;
+  };
 
   const ensureSemantics = async () => {
-    if (semanticsEnabled()) return true;
+    if (semanticsNodes().length) return true;
     const placeholder = document.querySelector('flt-semantics-placeholder');
     if (!placeholder) return false;
     placeholder.click();
-    for (let i = 0; i < 20 && !semanticsEnabled(); i++) await sleep(100);
-    return semanticsEnabled();
+    for (let i = 0; i < 30 && !semanticsNodes().length; i++) await sleep(100);
+    return semanticsNodes().length > 0;
   };
 
   const normalize = (s) => s.replace(/\s+/g, ' ').trim().toLowerCase();
+  const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-  const labelOf = (el) => el.getAttribute('aria-label') || el.textContent || '';
+  // A node's own label: its aria-label, or its text excluding child nodes
+  // (whose text belongs to them, not to this node).
+  const ownLabel = (el) => {
+    const aria = el.getAttribute('aria-label');
+    if (aria) return aria;
+    return [...el.childNodes]
+      .filter((n) => n.nodeType === Node.TEXT_NODE || (n.nodeType === Node.ELEMENT_NODE && !/^FLT-SEMANTICS/.test(n.tagName)))
+      .map((n) => n.textContent)
+      .join('\n');
+  };
 
-  const isTappable = (el) =>
-    el.hasAttribute('flt-tappable') || el.getAttribute('role') === 'button' || el.getAttribute('role') === 'link';
+  const isTappable = (el) => el.matches(TAPPABLE);
 
-  // Find the most specific tappable element whose label contains the name as a
-  // whole line (tiles usually read "Name\nClass\n…").
+  // How well a label matches the name: 3 = the whole label, 2 = a whole line,
+  // 1 = the name as separate word(s) inside the label, 0 = no match.
+  const matchScore = (label, want, wordRe) => {
+    const norm = normalize(label);
+    if (!norm) return 0;
+    if (norm === want) return 3;
+    if (label.split(/\n+/).map(normalize).includes(want)) return 2;
+    return wordRe.test(norm) ? 1 : 0;
+  };
+
+  // The element to click for a matching node: itself, the nearest tappable
+  // ancestor, or (for a card whose label sits outside its button) the only
+  // tappable descendant.
+  // Screen-sized tappables are background handlers (e.g. "tap to dismiss"),
+  // never a tile, so skip past them.
+  const isScreenSized = (el) => {
+    const r = el.getBoundingClientRect();
+    return r.width * r.height > 0.5 * window.innerWidth * window.innerHeight;
+  };
+
+  const tapTargetFor = (el) => {
+    if (isTappable(el) && !isScreenSized(el)) return el;
+    for (let up = el.parentElement && el.parentElement.closest(TAPPABLE); up; up = up.parentElement && up.parentElement.closest(TAPPABLE)) {
+      if (!isScreenSized(up)) return up;
+    }
+    const down = el.querySelectorAll(TAPPABLE);
+    return down.length === 1 ? down[0] : null;
+  };
+
   const findTile = (name) => {
     const want = normalize(name);
     if (!want) return null;
+    const wordRe = new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(want)}($|[^\\p{L}\\p{N}])`, 'u');
     let best = null;
-    for (const el of semanticsRoot().querySelectorAll('flt-semantics')) {
-      const raw = labelOf(el);
-      const lines = raw.split(/\n+/).map(normalize);
-      if (!lines.includes(want) && normalize(raw) !== want) continue;
-      const target = isTappable(el) ? el : el.closest('[flt-tappable], [role="button"], [role="link"]');
+    for (const el of semanticsNodes()) {
+      const score = matchScore(ownLabel(el), want, wordRe);
+      if (!score) continue;
+      const target = tapTargetFor(el);
       if (!target) continue;
-      const len = labelOf(target).length;
-      if (!best || len < best.len) best = { el: target, len };
+      // Prefer the best match, then the most specific (shortest) label.
+      const len = (target.textContent || '').length;
+      if (!best || score > best.score || (score === best.score && len < best.len)) best = { el: target, score, len };
     }
     return best && best.el;
   };
 
+  // The tree fills in over a few frames after it's switched on, so keep
+  // looking for a moment before giving up.
+  const waitForTile = async (name, ms) => {
+    for (let waited = 0; ; waited += 100) {
+      const tile = findTile(name);
+      if (tile || waited >= ms) return tile;
+      await sleep(100);
+    }
+  };
+
   const scrollables = () =>
-    [...semanticsRoot().querySelectorAll('flt-semantics')].filter((el) => {
+    semanticsNodes().filter((el) => {
       const style = getComputedStyle(el);
       return /(auto|scroll)/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 2;
     });
@@ -71,14 +126,36 @@
     return findTile(name);
   };
 
+  // A compact description of what's on screen, for bug reports.
+  const describeScreen = (name) => {
+    const nodes = semanticsNodes();
+    const lines = nodes.slice(0, 250).map((el) => {
+      let depth = 0;
+      for (let p = el.parentElement; p; p = p.parentElement) if (p.tagName === 'FLT-SEMANTICS') depth++;
+      const attrs = [el.getAttribute('role'), el.hasAttribute('flt-tappable') && 'tappable', el.getAttribute('aria-label') != null && 'aria']
+        .filter(Boolean).join(',');
+      const label = ownLabel(el).replace(/\s+/g, ' ').trim().slice(0, 80);
+      return `${'  '.repeat(Math.min(depth, 12))}[${attrs}] ${JSON.stringify(label)}`;
+    });
+    return [
+      `Mothership Folders diagnostics: looking for ${JSON.stringify(name)}`,
+      `semantics nodes: ${nodes.length}, scrollable regions: ${scrollables().length}, placeholder: ${!!document.querySelector('flt-semantics-placeholder')}`,
+      `url: ${location.pathname}${location.hash}`,
+      ...lines,
+    ].join('\n');
+  };
+
   const openCharacter = async (name) => {
     if (!(await ensureSemantics())) {
-      return { ok: false, reason: "Couldn't switch on the app's accessibility layer." };
+      return { ok: false, reason: "Couldn't switch on the app's accessibility layer.", details: describeScreen(name) };
     }
-    await sleep(50);
-    const tile = findTile(name) || (await scrollToFind(name));
+    const tile = (await waitForTile(name, 2000)) || (await scrollToFind(name));
     if (!tile) {
-      return { ok: false, reason: `Couldn't find "${name}" on screen. Open the app's character list first, then try again.` };
+      return {
+        ok: false,
+        reason: `Couldn't find "${name}" on screen. Open the app's character list first, then try again.`,
+        details: describeScreen(name),
+      };
     }
     tile.scrollIntoView({ block: 'center' });
     tile.click();
@@ -86,5 +163,5 @@
   };
 
   window.MSCFolders = window.MSCFolders || {};
-  window.MSCFolders.opener = { openCharacter, ensureSemantics };
+  window.MSCFolders.opener = { openCharacter, ensureSemantics, describeScreen };
 })();

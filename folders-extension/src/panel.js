@@ -4,14 +4,16 @@
   'use strict';
 
   const { store, opener } = window.MSCFolders;
+  const KINDS = store.kinds;
   const UI_KEY = 'ui';
 
   const ui = {
     open: false,
+    kind: 'characters', // which tab is showing
     query: '',
-    editing: null, // { kind: 'new' } | { kind: 'rename', folderId }
+    editing: null, // { mode: 'new' } | { mode: 'rename', folderId }
     editValue: '',
-    dragCharId: null,
+    dragItemId: null,
   };
 
   // ---- Tiny DOM helper (text only — never innerHTML with app data) ----------
@@ -57,6 +59,13 @@
     .icon { border: 0; background: none; font-size: 18px; line-height: 1; padding: 4px 6px; border-radius: 6px; }
     .icon:hover { background: #eee; }
     .icon:disabled { opacity: .3; cursor: default; background: none; }
+    .kinds { display: flex; margin: 0 14px 10px; border: 2px solid #000; border-radius: 8px; overflow: hidden; }
+    .kind { flex: 1; border: 0; background: #fff; padding: 6px 4px; font-size: 11px; font-weight: 800;
+      text-transform: uppercase; letter-spacing: .06em; }
+    .kind + .kind { border-left: 2px solid #000; }
+    .kind[aria-selected="true"] { background: #000; color: #fff; }
+    .kind:not([aria-selected="true"]):hover { background: #eee; }
+    .kind .n { font-weight: 400; opacity: .7; margin-left: 3px; }
     .status { padding: 0 14px 8px; font-size: 12px; color: #555; }
     .toolbar { display: flex; gap: 6px; padding: 0 14px 10px; }
     input[type=search], input.text {
@@ -95,9 +104,10 @@
     .row.drop-before { box-shadow: inset 0 3px 0 #000; }
     .grip { color: #999; font-size: 12px; user-select: none; }
     .who { flex: 1; min-width: 0; border: 0; background: none; text-align: left; padding: 0; }
-    .who:hover .cname { text-decoration: underline; }
-    .cname { display: block; font-size: 14px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .cclass { display: block; font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: .05em; }
+    .who:hover .iname { text-decoration: underline; }
+    .iname { display: block; font-size: 14px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .isub { display: block; font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: .05em;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .draft { font-size: 10px; border: 1px solid #999; border-radius: 4px; padding: 0 4px; margin-left: 4px; color: #666; font-weight: 400; }
     select.move { appearance: none; width: 28px; height: 26px; border: 1px solid #ccc; border-radius: 6px; background: #fff; color: #000; font-size: 14px; text-align: center; padding: 0; cursor: pointer; }
     select.move:hover { border-color: #000; }
@@ -118,8 +128,8 @@
 
   const host = h('div', { id: 'msc-folders-root' });
   const root = host.attachShadow({ mode: 'open' });
-  const tab = h('button', { class: 'tab', title: 'Character folders (Alt+F)', onClick: () => setOpen(!ui.open) }, 'FOLDERS');
-  const drawer = h('aside', { class: 'drawer', 'aria-label': 'Character folders' });
+  const tab = h('button', { class: 'tab', title: 'Folders (Alt+F)', onClick: () => setOpen(!ui.open) }, 'FOLDERS');
+  const drawer = h('aside', { class: 'drawer', 'aria-label': 'Folders' });
   const toastSlot = h('div');
   root.append(h('style', {}, CSS), tab, drawer, toastSlot);
 
@@ -137,29 +147,43 @@
     toastTimer = setTimeout(() => toastSlot.replaceChildren(), action ? 12000 : 4500);
   };
 
+  const saveUi = () => chrome.storage.local.set({ [UI_KEY]: { open: ui.open, kind: ui.kind } });
+
   const setOpen = (open) => {
     ui.open = open;
     drawer.classList.toggle('open', open);
     tab.style.display = open ? 'none' : '';
-    chrome.storage.local.set({ [UI_KEY]: { open } });
+    saveUi();
     if (open) render();
+  };
+
+  const setKind = (kind) => {
+    if (kind === ui.kind) return;
+    ui.kind = kind;
+    ui.query = '';
+    ui.editing = null;
+    saveUi();
+    render();
   };
 
   // ---- Rendering --------------------------------------------------------------
 
-  const characterList = () => Object.values(store.state.characters);
+  const kindInfo = () => KINDS[ui.kind];
+  const itemsOf = (kind) => Object.values(store.state.lists[kind].items);
 
   const matches = (c) => !ui.query || c.name.toLowerCase().includes(ui.query.toLowerCase());
 
   const statusText = () => {
-    const n = characterList().length;
-    const s = store.state.source;
-    if (s === 'firestore') return `${n} character${n === 1 ? '' : 's'} from your account.`;
-    if (s === 'cache') return `${n} character${n === 1 ? '' : 's'} (saved list; refreshes when the app loads them).`;
-    if (s === 'local') return `${n} character${n === 1 ? '' : 's'} stored on this device.`;
+    const { plural, singular, label } = kindInfo();
+    const n = itemsOf(ui.kind).length;
+    const count = `${n} ${n === 1 ? singular : plural}`;
+    const s = store.state.lists[ui.kind].source;
+    if (s === 'firestore') return `${count} from your account.`;
+    if (s === 'cache') return `${count} (saved list; refreshes when the app loads them).`;
+    if (s === 'local') return `${count} stored on this device.`;
     return store.state.uid
-      ? 'Waiting for the app to load your characters. Try opening the Characters screen.'
-      : 'Sign in to the app to see your characters.';
+      ? `Waiting for the app to load your ${plural}. Try opening the ${label} screen.`
+      : `Sign in to the app to see your ${plural}.`;
   };
 
   const commitEdit = () => {
@@ -171,8 +195,8 @@
       render();
       return;
     }
-    if (editing.kind === 'new') store.addFolder(name);
-    else store.renameFolder(editing.folderId, name);
+    if (editing.mode === 'new') store.addFolder(ui.kind, name);
+    else store.renameFolder(ui.kind, editing.folderId, name);
   };
 
   const editInput = (placeholder) => {
@@ -192,18 +216,6 @@
     return input;
   };
 
-  const openCharacter = async (c) => {
-    const result = await opener.openCharacter(c.name);
-    if (!result.ok) {
-      toast(result.reason, result.details && {
-        label: 'Copy details',
-        run: () => copyText(result.details).then(
-          () => toast('Details copied. Paste them into your bug report.'),
-          () => toast("Couldn't copy. Try again, or press Ctrl+C after selecting the text.")),
-      });
-    }
-  };
-
   const copyText = async (text) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -219,22 +231,41 @@
     }
   };
 
-  const moveSelect = (c, currentFolderId) => {
-    const folders = store.state.layout.folders;
+  const openItem = async (item) => {
+    // The tile may show the name or, for unnamed ships, the make and model.
+    const names = [item.name, item.subtitle].filter(Boolean);
+    if (!names.length) {
+      toast(`This ${kindInfo().singular} has no name to look for. Open it from the app instead.`);
+      return;
+    }
+    const result = await opener.openItem(names, kindInfo().label);
+    if (!result.ok) {
+      toast(result.reason, result.details && {
+        label: 'Copy details',
+        run: () => copyText(result.details).then(
+          () => toast('Details copied. Paste them into your bug report.'),
+          () => toast("Couldn't copy. Try again, or press Ctrl+C after selecting the text.")),
+      });
+    }
+  };
+
+  const moveSelect = (item, currentFolderId) => {
+    const kind = ui.kind;
+    const folders = store.state.layouts[kind].folders;
     return h('select', {
       class: 'move',
       title: 'Move to folder',
-      'aria-label': `Move ${c.name} to folder`,
+      'aria-label': `Move ${item.name} to folder`,
       onChange: (e) => {
         const v = e.target.value;
         if (v === '__keep') return;
         if (v === '__new') {
           const name = prompt('New folder name');
-          if (name && name.trim()) store.assign(c.id, store.addFolder(name.trim()).id);
+          if (name && name.trim()) store.assign(kind, item.id, store.addFolder(kind, name.trim()).id);
           else render();
           return;
         }
-        store.assign(c.id, v === '__none' ? null : v);
+        store.assign(kind, item.id, v === '__none' ? null : v);
       },
     },
     h('option', { value: '__keep', selected: true }, '⋯'),
@@ -243,49 +274,52 @@
     h('option', { value: '__new' }, 'New folder…'));
   };
 
-  const characterRow = (c, folderId) => {
+  const itemRow = (item, folderId) => {
+    const kind = ui.kind;
     const row = h('div', {
       class: 'row',
       draggable: 'true',
-      dataset: { charId: c.id },
+      dataset: { itemId: item.id },
       onDragstart: (e) => {
-        ui.dragCharId = c.id;
+        ui.dragItemId = item.id;
         e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', c.id);
+        e.dataTransfer.setData('text/plain', item.id);
         row.classList.add('dragging');
       },
       onDragend: () => {
-        ui.dragCharId = null;
+        ui.dragItemId = null;
         row.classList.remove('dragging');
         root.querySelectorAll('.drop, .drop-before').forEach((el) => el.classList.remove('drop', 'drop-before'));
       },
       onDragover: (e) => {
-        if (!ui.dragCharId || ui.dragCharId === c.id || !folderId) return;
+        if (!ui.dragItemId || ui.dragItemId === item.id || !folderId) return;
         e.preventDefault();
         row.classList.add('drop-before');
       },
       onDragleave: () => row.classList.remove('drop-before'),
       onDrop: (e) => {
-        if (!ui.dragCharId || !folderId) return;
+        if (!ui.dragItemId || !folderId) return;
         e.preventDefault();
         e.stopPropagation();
-        store.assign(ui.dragCharId, folderId, c.id);
+        store.assign(kind, ui.dragItemId, folderId, item.id);
       },
     },
     h('span', { class: 'grip', 'aria-hidden': 'true' }, '⋮⋮'),
-    h('button', { class: 'who', title: 'Open in the app', onClick: () => openCharacter(c) },
-      h('span', { class: 'cname' }, c.name || '(unnamed)', c.creationComplete ? null : h('span', { class: 'draft' }, 'draft')),
-      c.characterClass ? h('span', { class: 'cclass' }, c.characterClass) : null),
-    moveSelect(c, folderId));
+    h('button', { class: 'who', title: 'Open in the app', onClick: () => openItem(item) },
+      h('span', { class: 'iname' }, item.name || '(unnamed)', item.draft ? h('span', { class: 'draft' }, 'draft') : null),
+      item.subtitle ? h('span', { class: 'isub' }, item.subtitle) : null),
+    moveSelect(item, folderId));
     return row;
   };
 
-  const folderSection = ({ id, name, collapsed, chars, unfiled, index, total }) => {
-    const isRenaming = ui.editing && ui.editing.kind === 'rename' && ui.editing.folderId === id;
+  const folderSection = ({ id, name, collapsed, items, unfiled, index, total }) => {
+    const kind = ui.kind;
+    const { plural } = kindInfo();
+    const isRenaming = ui.editing && ui.editing.mode === 'rename' && ui.editing.folderId === id;
     const section = h('section', {
       class: `folder${unfiled ? ' unfiled' : ''}${collapsed && !ui.query ? ' collapsed' : ''}`,
       onDragover: (e) => {
-        if (!ui.dragCharId) return;
+        if (!ui.dragItemId) return;
         e.preventDefault();
         section.classList.add('drop');
       },
@@ -293,9 +327,9 @@
         if (!section.contains(e.relatedTarget)) section.classList.remove('drop');
       },
       onDrop: (e) => {
-        if (!ui.dragCharId) return;
+        if (!ui.dragItemId) return;
         e.preventDefault();
-        store.assign(ui.dragCharId, unfiled ? null : id);
+        store.assign(kind, ui.dragItemId, unfiled ? null : id);
       },
     });
 
@@ -305,27 +339,27 @@
         : h('button', {
           class: 'fname',
           'aria-expanded': String(!collapsed),
-          onClick: () => store.toggleFolder(unfiled ? null : id),
+          onClick: () => store.toggleFolder(kind, unfiled ? null : id),
         }, h('span', { class: 'caret', 'aria-hidden': 'true' }, '▾'), ` ${name}`),
-      !isRenaming && h('span', { class: 'count' }, String(chars.length)),
+      !isRenaming && h('span', { class: 'count' }, String(items.length)),
       !unfiled && !isRenaming && h('span', { class: 'ficons' },
-        h('button', { class: 'icon', title: 'Move up', disabled: index === 0, onClick: () => store.moveFolder(id, -1) }, '↑'),
-        h('button', { class: 'icon', title: 'Move down', disabled: index === total - 1, onClick: () => store.moveFolder(id, 1) }, '↓'),
+        h('button', { class: 'icon', title: 'Move up', disabled: index === 0, onClick: () => store.moveFolder(kind, id, -1) }, '↑'),
+        h('button', { class: 'icon', title: 'Move down', disabled: index === total - 1, onClick: () => store.moveFolder(kind, id, 1) }, '↓'),
         h('button', {
           class: 'icon',
           title: 'Rename',
-          onClick: () => { ui.editing = { kind: 'rename', folderId: id }; ui.editValue = name; render(); },
+          onClick: () => { ui.editing = { mode: 'rename', folderId: id }; ui.editValue = name; render(); },
         }, '✎'),
         h('button', {
           class: 'icon',
-          title: 'Delete folder (characters move to Unfiled)',
-          onClick: () => { if (confirm(`Delete folder "${name}"? Its characters move to Unfiled.`)) store.deleteFolder(id); },
+          title: `Delete folder (${plural} move to Unfiled)`,
+          onClick: () => { if (confirm(`Delete folder "${name}"? Its ${plural} move to Unfiled.`)) store.deleteFolder(kind, id); },
         }, '✕')));
 
     const rows = h('div', { class: 'rows' },
-      chars.length
-        ? chars.map((c) => characterRow(c, unfiled ? null : id))
-        : h('div', { class: 'empty' }, ui.query ? 'No matches.' : unfiled ? 'Everything is filed.' : 'Drag characters here.'));
+      items.length
+        ? items.map((item) => itemRow(item, unfiled ? null : id))
+        : h('div', { class: 'empty' }, ui.query ? 'No matches.' : unfiled ? 'Everything is filed.' : `Drag ${plural} here.`));
 
     section.append(head, rows);
     return section;
@@ -333,22 +367,24 @@
 
   const render = () => {
     if (!ui.open) return;
-    const { layout, characters } = store.state;
+    const kind = ui.kind;
+    const layout = store.state.layouts[kind];
+    const items = store.state.lists[kind].items;
     const filed = new Set();
     const sections = layout.folders.map((f, index) => {
-      const chars = f.charIds.map((id) => characters[id]).filter(Boolean);
-      chars.forEach((c) => filed.add(c.id));
-      return { id: f.id, name: f.name, collapsed: f.collapsed, chars: chars.filter(matches), index, total: layout.folders.length };
+      const inFolder = f.itemIds.map((id) => items[id]).filter(Boolean);
+      inFolder.forEach((c) => filed.add(c.id));
+      return { id: f.id, name: f.name, collapsed: f.collapsed, items: inFolder.filter(matches), index, total: layout.folders.length };
     });
-    const unfiled = characterList()
+    const unfiled = itemsOf(kind)
       .filter((c) => !filed.has(c.id))
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 
     // Searching hides folders with no matches.
-    const visible = ui.query ? sections.filter((s) => s.chars.length) : sections;
+    const visible = ui.query ? sections.filter((s) => s.items.length) : sections;
 
     const list = h('div', { class: 'list' },
-      ui.editing && ui.editing.kind === 'new'
+      ui.editing && ui.editing.mode === 'new'
         ? h('div', { class: 'toolbar' }, editInput('New folder name'))
         : null,
       visible.map(folderSection),
@@ -356,7 +392,7 @@
         id: null,
         name: 'Unfiled',
         collapsed: layout.unfiledCollapsed,
-        chars: unfiled.filter(matches),
+        items: unfiled.filter(matches),
         unfiled: true,
       }));
 
@@ -365,27 +401,36 @@
 
     const search = h('input', {
       type: 'search',
-      placeholder: 'Search characters',
+      placeholder: `Search ${kindInfo().plural}`,
       value: ui.query,
-      'aria-label': 'Search characters',
+      'aria-label': `Search ${kindInfo().plural}`,
       onInput: (e) => { ui.query = e.target.value; render(); },
     });
+
+    const kindTabs = h('div', { class: 'kinds', role: 'tablist' },
+      Object.entries(KINDS).map(([k, info]) => h('button', {
+        class: 'kind',
+        role: 'tab',
+        'aria-selected': String(k === kind),
+        onClick: () => setKind(k),
+      }, info.label, h('span', { class: 'n' }, String(itemsOf(k).length)))));
 
     drawer.replaceChildren(
       h('header', {},
         h('h1', {}, 'Folders'),
         h('button', { class: 'icon', title: 'Close (Alt+F)', 'aria-label': 'Close', onClick: () => setOpen(false) }, '✕')),
+      kindTabs,
       h('div', { class: 'status' }, statusText()),
       h('div', { class: 'toolbar' },
         search,
         h('button', {
           class: 'btn',
-          onClick: () => { ui.editing = { kind: 'new' }; ui.editValue = ''; render(); },
+          onClick: () => { ui.editing = { mode: 'new' }; ui.editValue = ''; render(); },
         }, '+ Folder')),
       list,
       h('footer', {},
-        h('button', { class: 'btn secondary', title: 'Download your folders as a JSON backup', onClick: exportLayout }, 'Export'),
-        h('button', { class: 'btn secondary', title: 'Restore folders from a JSON backup', onClick: importLayout }, 'Import')));
+        h('button', { class: 'btn secondary', title: 'Download all your folders as a JSON backup', onClick: exportLayouts }, 'Export'),
+        h('button', { class: 'btn secondary', title: 'Restore folders from a JSON backup', onClick: importLayouts }, 'Import')));
 
     list.scrollTop = prevScroll;
     if (searchFocused) {
@@ -396,8 +441,8 @@
 
   // ---- Backup -----------------------------------------------------------------
 
-  const exportLayout = () => {
-    const blob = new Blob([store.exportLayout()], { type: 'application/json' });
+  const exportLayouts = () => {
+    const blob = new Blob([store.exportLayouts()], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = h('a', { href: url, download: 'mothership-folders.json' });
     root.append(a);
@@ -406,19 +451,22 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
-  const importLayout = () => {
-    const input = h('input', { type: 'file', accept: 'application/json,.json' });
+  const importLayouts = () => {
+    const input = h('input', { type: 'file', accept: 'application/json,.json', hidden: true });
     input.addEventListener('change', async () => {
       const file = input.files && input.files[0];
+      input.remove();
       if (!file) return;
       try {
         if (!confirm('Replace your current folders with this backup?')) return;
-        store.importLayout(await file.text());
+        store.importLayouts(await file.text());
         toast('Folders restored.');
       } catch {
         toast("That file isn't a valid folders backup.");
       }
     });
+    input.addEventListener('cancel', () => input.remove());
+    root.append(input);
     input.click();
   };
 
@@ -426,7 +474,11 @@
 
   const mount = () => {
     document.documentElement.append(host);
-    chrome.storage.local.get(UI_KEY, (r) => setOpen(!!(r[UI_KEY] && r[UI_KEY].open)));
+    chrome.storage.local.get(UI_KEY, (r) => {
+      const saved = r[UI_KEY] || {};
+      if (KINDS[saved.kind]) ui.kind = saved.kind;
+      setOpen(!!saved.open);
+    });
     window.addEventListener('keydown', (e) => {
       if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'f' || e.key === 'F' || e.code === 'KeyF')) {
         e.preventDefault();

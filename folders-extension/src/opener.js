@@ -92,16 +92,6 @@
     return best && best.el;
   };
 
-  // The tree fills in over a few frames after it's switched on, so keep
-  // looking for a moment before giving up.
-  const waitForTile = async (name, ms) => {
-    for (let waited = 0; ; waited += 100) {
-      const tile = findTile(name);
-      if (tile || waited >= ms) return tile;
-      await sleep(100);
-    }
-  };
-
   const scrollables = () =>
     semanticsNodes().filter((el) => {
       const style = getComputedStyle(el);
@@ -145,16 +135,28 @@
     ].join('\n');
   };
 
-  const openCharacter = async (name) => {
+  // Tap the tile for the first of `names` found on screen. `screen` names the
+  // app screen that lists these items, for the error message.
+  const openItem = async (names, screen = 'Characters') => {
+    const [first] = names;
     if (!(await ensureSemantics())) {
-      return { ok: false, reason: "Couldn't switch on the app's accessibility layer.", details: describeScreen(name) };
+      return { ok: false, reason: "Couldn't switch on the app's accessibility layer.", details: describeScreen(first) };
     }
-    const tile = (await waitForTile(name, 2000)) || (await scrollToFind(name));
+    const findAny = () => names.map(findTile).find(Boolean) || null;
+    let tile = null;
+    for (let waited = 0; !tile && waited <= 2000; waited += 100) {
+      tile = findAny();
+      if (!tile) await sleep(100);
+    }
+    for (const name of names) {
+      if (tile) break;
+      tile = await scrollToFind(name);
+    }
     if (!tile) {
       return {
         ok: false,
-        reason: `Couldn't find "${name}" on screen. Open the app's character list first, then try again.`,
-        details: describeScreen(name),
+        reason: `Couldn't find "${first}" on screen. Open the app's ${screen} list first, then try again.`,
+        details: describeScreen(first),
       };
     }
     tile.scrollIntoView({ block: 'center' });
@@ -163,5 +165,5 @@
   };
 
   window.MSCFolders = window.MSCFolders || {};
-  window.MSCFolders.opener = { openCharacter, ensureSemantics, describeScreen };
+  window.MSCFolders.opener = { openItem, ensureSemantics, describeScreen };
 })();

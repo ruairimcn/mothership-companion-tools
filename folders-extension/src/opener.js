@@ -33,16 +33,25 @@
   const normalize = (s) => s.replace(/\s+/g, ' ').trim().toLowerCase();
   const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-  // A node's own label: its aria-label, or its text excluding child nodes
-  // (whose text belongs to them, not to this node).
+  // The input element of a text field node, if it is one. Text fields keep
+  // their text in the input's value rather than in a label.
+  const fieldInput = (el) =>
+    [...el.children].find((c) => c.tagName === 'INPUT' || c.tagName === 'TEXTAREA') || null;
+
+  // A node's own text: its aria-label, its field's value, and its text
+  // excluding child nodes (whose text belongs to them, not to this node).
   const ownLabel = (el) => {
-    const aria = el.getAttribute('aria-label');
-    if (aria) return aria;
-    return [...el.childNodes]
-      .filter((n) => n.nodeType === Node.TEXT_NODE || (n.nodeType === Node.ELEMENT_NODE && !/^FLT-SEMANTICS/.test(n.tagName)))
+    const parts = [el.getAttribute('aria-label') || ''];
+    const input = fieldInput(el);
+    if (input) parts.push(input.value || input.getAttribute('value') || '');
+    parts.push([...el.childNodes]
+      .filter((n) => n.nodeType === Node.TEXT_NODE || (n.nodeType === Node.ELEMENT_NODE && !/^(FLT-SEMANTICS|INPUT|TEXTAREA)/.test(n.tagName)))
       .map((n) => n.textContent)
-      .join('\n');
+      .join('\n'));
+    return parts.filter((p) => p.trim()).join('\n');
   };
+
+  const isTextField = (el) => !!fieldInput(el) || el.getAttribute('role') === 'textbox';
 
   const isTappable = (el) => el.matches(TAPPABLE);
 
@@ -56,9 +65,6 @@
     return wordRe.test(norm) ? 1 : 0;
   };
 
-  // The element to click for a matching node: itself, the nearest tappable
-  // ancestor, or (for a card whose label sits outside its button) the only
-  // tappable descendant.
   // Screen-sized tappables are background handlers (e.g. "tap to dismiss"),
   // never a tile, so skip past them.
   const isScreenSized = (el) => {
@@ -66,13 +72,26 @@
     return r.width * r.height > 0.5 * window.innerWidth * window.innerHeight;
   };
 
+  // How to tap a matching node. Returns { el } to click a semantics element,
+  // or { el, x, y } to tap that point on the screen, or null.
+  //   - a tappable node: click it
+  //   - otherwise its nearest tappable ancestor (e.g. the card around a label)
+  //   - or, for a card whose label sits outside its button, its only tappable child
+  // A text field (like the boxed names on character cards) would just start
+  // editing if clicked, so for those we tap the card just above the field.
   const tapTargetFor = (el) => {
-    if (isTappable(el) && !isScreenSized(el)) return el;
+    const field = isTextField(el);
+    if (!field && isTappable(el) && !isScreenSized(el)) return { el };
     for (let up = el.parentElement && el.parentElement.closest(TAPPABLE); up; up = up.parentElement && up.parentElement.closest(TAPPABLE)) {
-      if (!isScreenSized(up)) return up;
+      if (!isScreenSized(up)) return { el: up };
+    }
+    if (field) {
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) return null;
+      return { el, x: r.left + r.width / 2, y: Math.max(0, r.top - Math.min(8, r.height / 3)) };
     }
     const down = el.querySelectorAll(TAPPABLE);
-    return down.length === 1 ? down[0] : null;
+    return down.length === 1 ? { el: down[0] } : null;
   };
 
   const findTile = (name) => {
@@ -86,10 +105,10 @@
       const target = tapTargetFor(el);
       if (!target) continue;
       // Prefer the best match, then the most specific (shortest) label.
-      const len = (target.textContent || '').length;
-      if (!best || score > best.score || (score === best.score && len < best.len)) best = { el: target, score, len };
+      const len = (target.el.textContent || '').length;
+      if (!best || score > best.score || (score === best.score && len < best.len)) best = { target, score, len };
     }
-    return best && best.el;
+    return best && best.target;
   };
 
   const scrollables = () =>
@@ -116,13 +135,23 @@
     return findTile(name);
   };
 
+  // Send a mouse tap to whatever the app has drawn at (x, y). Flutter handles
+  // these like real pointer input.
+  const tapAt = async (x, y) => {
+    const view = document.querySelector('flutter-view') || document.elementFromPoint(x, y);
+    const opts = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0 };
+    view.dispatchEvent(new PointerEvent('pointerdown', { ...opts, buttons: 1 }));
+    await sleep(40);
+    view.dispatchEvent(new PointerEvent('pointerup', { ...opts, buttons: 0 }));
+  };
+
   // A compact description of what's on screen, for bug reports.
   const describeScreen = (name) => {
     const nodes = semanticsNodes();
     const lines = nodes.slice(0, 250).map((el) => {
       let depth = 0;
       for (let p = el.parentElement; p; p = p.parentElement) if (p.tagName === 'FLT-SEMANTICS') depth++;
-      const attrs = [el.getAttribute('role'), el.hasAttribute('flt-tappable') && 'tappable', el.getAttribute('aria-label') != null && 'aria']
+      const attrs = [el.getAttribute('role'), el.hasAttribute('flt-tappable') && 'tappable', el.getAttribute('aria-label') != null && 'aria', isTextField(el) && 'field']
         .filter(Boolean).join(',');
       const label = ownLabel(el).replace(/\s+/g, ' ').trim().slice(0, 80);
       return `${'  '.repeat(Math.min(depth, 12))}[${attrs}] ${JSON.stringify(label)}`;
@@ -159,11 +188,17 @@
         details: describeScreen(first),
       };
     }
-    tile.scrollIntoView({ block: 'center' });
-    tile.click();
+    tile.el.scrollIntoView({ block: 'nearest' });
+    if (tile.x == null) {
+      tile.el.click();
+    } else {
+      // Re-measure after scrolling, then tap the screen like a finger would.
+      const again = tapTargetFor(tile.el) || tile;
+      await tapAt(again.x, again.y);
+    }
     return { ok: true };
   };
 
   window.MSCFolders = window.MSCFolders || {};
-  window.MSCFolders.opener = { openItem, ensureSemantics, describeScreen };
+  window.MSCFolders.opener = { openItem, ensureSemantics, describeScreen, tapAt };
 })();

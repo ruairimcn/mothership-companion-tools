@@ -11,6 +11,7 @@
   // What the panel calls each kind of record (parsing lives in hook.js).
   const KINDS = {
     characters: { label: 'Characters', singular: 'character', plural: 'characters' },
+    npcs: { label: 'NPCs', singular: 'NPC', plural: 'NPCs' },
     ships: { label: 'Ships', singular: 'ship', plural: 'ships' },
     maps: { label: 'Maps', singular: 'map', plural: 'maps' },
   };
@@ -111,6 +112,11 @@
     emit();
   };
 
+  // The hook reports player characters and NPCs together as 'characters';
+  // they get separate lists (and folders) here.
+  const listsFor = (hookKind) => (hookKind === 'characters' ? ['characters', 'npcs'] : [hookKind]);
+  const kindOf = (hookKind, item) => (hookKind === 'characters' && item.npc ? 'npcs' : hookKind);
+
   const handleHookMessage = async (msg) => {
     if (msg.type === 'hook-ready') {
       state.hookReady = true;
@@ -118,10 +124,11 @@
       return;
     }
     if (!KINDS[msg.kind]) return;
+    const targets = listsFor(msg.kind);
     if (msg.type === 'local' && Array.isArray(msg.items)) {
-      state.locals[msg.kind] = {};
-      msg.items.filter(isValidItem).forEach((c) => { state.locals[msg.kind][c.id] = c; });
-      if (applyLocal(msg.kind)) emit();
+      targets.forEach((k) => { state.locals[k] = {}; });
+      msg.items.filter(isValidItem).forEach((c) => { state.locals[kindOf(msg.kind, c)][c.id] = c; });
+      if (targets.map(applyLocal).some(Boolean)) emit();
       return;
     }
     if (typeof msg.uid !== 'string') return;
@@ -130,21 +137,29 @@
     if (authUid && msg.uid !== authUid) return;
     if (msg.uid !== state.uid) await setUid(msg.uid);
 
-    const list = state.lists[msg.kind];
+    const lists = targets.map((k) => state.lists[k]);
     if (msg.type === 'replace' && Array.isArray(msg.items)) {
-      list.items = {};
-      msg.items.filter(isValidItem).forEach((c) => { list.items[c.id] = c; });
+      lists.forEach((list) => { list.items = {}; });
+      msg.items.filter(isValidItem).forEach((c) => { state.lists[kindOf(msg.kind, c)].items[c.id] = c; });
     } else if (msg.type === 'upsert' && Array.isArray(msg.items)) {
-      msg.items.filter(isValidItem).forEach((c) => { list.items[c.id] = c; });
-    } else if (msg.type === 'rename' && list.items[msg.id] && typeof msg.name === 'string') {
-      list.items[msg.id] = { ...list.items[msg.id], name: msg.name };
+      msg.items.filter(isValidItem).forEach((c) => {
+        // A character can be switched between player character and NPC.
+        lists.forEach((list) => { delete list.items[c.id]; });
+        state.lists[kindOf(msg.kind, c)].items[c.id] = c;
+      });
+    } else if (msg.type === 'rename' && typeof msg.name === 'string') {
+      lists.forEach((list) => {
+        if (list.items[msg.id]) list.items[msg.id] = { ...list.items[msg.id], name: msg.name };
+      });
     } else if (msg.type === 'delete' && Array.isArray(msg.ids)) {
-      msg.ids.forEach((id) => { delete list.items[id]; });
+      lists.forEach((list) => msg.ids.forEach((id) => { delete list.items[id]; }));
     } else {
       return;
     }
-    list.source = 'firestore';
-    persistItems(msg.kind);
+    targets.forEach((k) => {
+      state.lists[k].source = 'firestore';
+      persistItems(k);
+    });
     emit();
   };
 

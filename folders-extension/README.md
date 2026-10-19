@@ -1,6 +1,6 @@
 # Mothership Companion Folders
 
-A Chrome extension that adds a **Folders** drawer to [mothershipcompanion.com](https://mothershipcompanion.com/) so you can group your characters, ships and maps.
+A Chrome extension that adds a **Folders** drawer to [mothershipcompanion.com](https://mothershipcompanion.com/) so you can group your characters, NPCs, ships and maps.
 
 ## Install (unpacked)
 
@@ -20,7 +20,7 @@ From v0.2 the extension has a fixed ID, so later updates keep your folders even 
 ## Use
 
 - Click the **FOLDERS** tab on the right edge, or press **Alt+F**.
-- Switch between **Characters**, **Ships** and **Maps** at the top. Each has its own folders.
+- The drawer follows the app: on the Characters page it shows your player-character folders (or NPC folders when the **NPCS** tab is selected), and on the Ships and Maps pages it shows those folders. Each list has its own folders. On other pages it asks you to open one of those.
 - **+ Folder** creates a folder. ✎ renames, ↑/↓ reorders, ✕ deletes (its characters go back to Unfiled).
 - Drag an item onto a folder to file it, or onto another item to place it just above. The **⋯** menu on each item does the same without dragging.
 - Click a name to open it in the app. This works when the matching list (Characters, Ships or Maps) is on screen in the app. If it can't find it, the message has a **Copy details** button; paste the result into a bug report.
@@ -34,16 +34,16 @@ The app is Flutter web: everything is drawn on a `<canvas>`, so there's no HTML 
 
 1. **Reads your lists** (`src/hook.js`). The app loads the Firebase SDK and assigns it to `window.firebase_firestore`. The extension intercepts that assignment and wraps the read and write functions, so when the app loads or changes `users/{you}/characters`, `/ships` or `/maps` the extension gets each item's id, name and subtitle. Calls are forwarded unchanged and the extension never writes to Firestore. Lists are cached per account so the drawer fills immediately on the next visit.
    If you aren't signed in, it reads the app's local caches instead (`flutter.CharacterPool`, `flutter.ShipCubit`, `flutter.MapCubit` in `localStorage`).
-   - Characters show their name and class; maps show their title and module.
+   - Characters show their name and class, and are split into player characters and NPCs by their `mode`; maps show their title and module.
    - Ships have no single name field, so the drawer shows the ship identifier, or the make and model if that's blank.
-2. **Shows its own drawer** (`src/panel.js`, `src/store.js`) in a Shadow DOM over the app.
-3. **Opens items** (`src/opener.js`) by turning on Flutter's accessibility tree (real DOM elements with labels) and clicking the element labelled with the item's name.
+2. **Shows its own drawer** (`src/panel.js`, `src/store.js`) in a Shadow DOM over the app. `src/page.js` works out which list the app is showing from its accessibility tree (the PLAYER CHARACTERS / NPCS tabs, and which items' names are on screen), since the app's navigation doesn't change the URL.
+3. **Opens items** (`src/opener.js`) by finding the element labelled with the item's name in Flutter's accessibility tree (real DOM elements with labels) and clicking it, or, for names shown in a text field, tapping the card just above the field.
 
 ## Known limits
 
 - The app's own lists stay flat; folders live in the drawer.
 - "Open in app" needs the matching list visible in the app. If two items share a name, it opens the first one it finds.
-- After the first "open", the app's accessibility layer stays on until you reload. It's harmless but can make the app slightly slower.
+- The extension switches on the app's accessibility layer when the app loads, so it can see which page is showing. It's a standard Flutter mode, but can make the app slightly slower. If it can't be switched on, the drawer shows Characters / NPCs / Ships / Maps tabs instead.
 - It relies on app internals (the `firebase_firestore` global, Firestore paths, labels). An app update could break it; the drawer would then show "Waiting for the app to load your characters".
 
 ## Tests

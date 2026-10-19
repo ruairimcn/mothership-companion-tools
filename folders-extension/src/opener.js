@@ -200,5 +200,5 @@
   };
 
   window.MSCFolders = window.MSCFolders || {};
-  window.MSCFolders.opener = { openItem, ensureSemantics, describeScreen, tapAt };
+  window.MSCFolders.opener = { openItem, ensureSemantics, describeScreen, tapAt, semanticsNodes, ownLabel, normalize };
 })();

@@ -3,13 +3,13 @@
 (() => {
   'use strict';
 
-  const { store, opener } = window.MSCFolders;
+  const { store, opener, page } = window.MSCFolders;
   const KINDS = store.kinds;
   const UI_KEY = 'ui';
 
   const ui = {
     open: false,
-    kind: 'characters', // which tab is showing
+    kind: 'characters', // which list is showing (follows the app's page)
     query: '',
     editing: null, // { mode: 'new' } | { mode: 'rename', folderId }
     editValue: '',
@@ -98,6 +98,8 @@
     .rows { padding: 4px; }
     .collapsed .rows { display: none; }
     .empty { padding: 8px; font-size: 12px; color: #777; font-style: italic; }
+    .hint { margin: 4px 14px; padding: 14px; border: 2px dashed #000; border-radius: 10px; font-size: 13px; line-height: 1.45; }
+    .hint-wrap { flex: 1; }
     .row { display: flex; align-items: center; gap: 6px; padding: 5px 6px; border-radius: 7px; cursor: grab; }
     .row:hover { background: #f2f2f2; }
     .row.dragging { opacity: .4; }
@@ -365,8 +367,31 @@
     return section;
   };
 
+  // Like replaceChildren, but skips the false/null parts of conditional layouts
+  // (replaceChildren would show them as text).
+  const setDrawer = (...parts) => drawer.replaceChildren(...parts.filter(Boolean));
+
+  // Pages without a list (Roll, Online, Settings…) get a pointer instead.
+  const renderHint = () => {
+    setDrawer(
+      h('header', {},
+        h('h1', {}, 'Folders'),
+        h('button', { class: 'icon', title: 'Close (Alt+F)', 'aria-label': 'Close', onClick: () => setOpen(false) }, '✕')),
+      h('div', { class: 'hint-wrap' },
+        h('p', { class: 'hint' }, 'Open Characters, Ships or Maps in the app to see their folders.')),
+      footer());
+  };
+
+  const footer = () => h('footer', {},
+    h('button', { class: 'btn secondary', title: 'Download all your folders as a JSON backup', onClick: exportLayouts }, 'Export'),
+    h('button', { class: 'btn secondary', title: 'Restore folders from a JSON backup', onClick: importLayouts }, 'Import'));
+
   const render = () => {
     if (!ui.open) return;
+    if (page.state.available && !page.state.kind) {
+      renderHint();
+      return;
+    }
     const kind = ui.kind;
     const layout = store.state.layouts[kind];
     const items = store.state.lists[kind].items;
@@ -407,7 +432,8 @@
       onInput: (e) => { ui.query = e.target.value; render(); },
     });
 
-    const kindTabs = h('div', { class: 'kinds', role: 'tablist' },
+    // Tabs only appear when the page can't be detected.
+    const kindTabs = !page.state.available && h('div', { class: 'kinds', role: 'tablist' },
       Object.entries(KINDS).map(([k, info]) => h('button', {
         class: 'kind',
         role: 'tab',
@@ -415,9 +441,9 @@
         onClick: () => setKind(k),
       }, info.label, h('span', { class: 'n' }, String(itemsOf(k).length)))));
 
-    drawer.replaceChildren(
+    setDrawer(
       h('header', {},
-        h('h1', {}, 'Folders'),
+        h('h1', {}, page.state.available ? `${kindInfo().label} folders` : 'Folders'),
         h('button', { class: 'icon', title: 'Close (Alt+F)', 'aria-label': 'Close', onClick: () => setOpen(false) }, '✕')),
       kindTabs,
       h('div', { class: 'status' }, statusText()),
@@ -428,9 +454,7 @@
           onClick: () => { ui.editing = { mode: 'new' }; ui.editValue = ''; render(); },
         }, '+ Folder')),
       list,
-      h('footer', {},
-        h('button', { class: 'btn secondary', title: 'Download all your folders as a JSON backup', onClick: exportLayouts }, 'Export'),
-        h('button', { class: 'btn secondary', title: 'Restore folders from a JSON backup', onClick: importLayouts }, 'Import')));
+      footer());
 
     list.scrollTop = prevScroll;
     if (searchFocused) {
@@ -487,6 +511,16 @@
       }
     }, true);
   };
+
+  page.subscribe(({ kind }) => {
+    if (kind && kind !== ui.kind) {
+      ui.kind = kind;
+      ui.query = '';
+      ui.editing = null;
+      saveUi();
+    }
+    render();
+  });
 
   store.subscribe(() => {
     // Don't wipe a half-typed folder name when data arrives in the background.

@@ -32,6 +32,8 @@
         name: text(d.name),
         subtitle: text(d.characterClassOverride) || text(d.characterClass),
         draft: d.creationComplete === false,
+        // NPCs live in the same collection; the panel files them separately.
+        npc: d.mode === 'npc',
       }),
     },
     ships: {

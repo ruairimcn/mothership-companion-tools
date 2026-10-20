@@ -233,14 +233,31 @@
     }
   };
 
+  // The app's character list order: living before dead, then by name
+  // (case-sensitive, by character code), then by class override.
+  const byCode = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+  const appOrder = (a, b) =>
+    (Number(!!a.dead) - Number(!!b.dead))
+    || byCode(a.sortName ?? a.name, b.sortName ?? b.name)
+    || byCode(a.classOverride || '', b.classOverride || '');
+
+  const isCharacterKind = (kind) => kind === 'characters' || kind === 'npcs';
+
   const openItem = async (item) => {
-    // The tile may show the name or, for unnamed ships, the make and model.
-    const names = [item.name, item.subtitle].filter(Boolean);
-    if (!names.length) {
-      toast(`This ${kindInfo().singular} has no name to look for. Open it from the app instead.`);
-      return;
+    let result;
+    if (isCharacterKind(ui.kind)) {
+      // Character cards don't expose names, so open by position in the list.
+      const index = itemsOf(ui.kind).sort(appOrder).findIndex((c) => c.id === item.id);
+      result = await opener.openCard(index, item.name || `this ${kindInfo().singular}`);
+    } else {
+      // The tile may show the name or, for unnamed ships, the make and model.
+      const names = [item.name, item.subtitle].filter(Boolean);
+      if (!names.length) {
+        toast(`This ${kindInfo().singular} has no name to look for. Open it from the app instead.`);
+        return;
+      }
+      result = await opener.openItem(names, kindInfo().label);
     }
-    const result = await opener.openItem(names, kindInfo().label);
     if (!result.ok) {
       toast(result.reason, result.details && {
         label: 'Copy details',

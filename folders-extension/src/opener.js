@@ -145,6 +145,104 @@
     view.dispatchEvent(new PointerEvent('pointerup', { ...opts, buttons: 0 }));
   };
 
+  // ---- Character cards ----------------------------------------------------------
+  //
+  // Character cards show the name in a disabled text field, and Flutter never
+  // puts a field's text in the DOM, so cards can't be found by name. Instead
+  // the panel works out the character's position in the app's sorted list,
+  // and we count cards: scroll the list to the top, then step down.
+
+  const FIELD = 'input[data-semantics-role="text-field"], textarea[data-semantics-role="text-field"]';
+  const fieldCount = (el) => (el ? el.querySelectorAll(FIELD).length : 0);
+  const parentNode = (el) => el.parentElement && el.parentElement.closest('flt-semantics');
+
+  // A card is the largest node holding exactly its two fields (name, class).
+  const cards = () =>
+    semanticsNodes()
+      .filter((el) => fieldCount(el) === 2 && fieldCount(parentNode(el)) !== 2)
+      .map((el) => ({ el, id: el.id, rect: el.getBoundingClientRect() }))
+      .filter((c) => c.rect.height > 0)
+      .sort((a, b) => a.rect.top - b.rect.top);
+
+  // The part of the screen where cards can be tapped: below the PLAYER
+  // CHARACTERS / NPCS tabs and above the bottom button bar.
+  const safeZone = () => {
+    let top = 0;
+    for (const el of semanticsNodes()) {
+      if (/^(player characters|npcs)$/.test(normalize(ownLabel(el)))) top = Math.max(top, el.getBoundingClientRect().bottom);
+    }
+    return { top: top + 4, bottom: window.innerHeight - 72 };
+  };
+
+  const wheelAt = async (x, y, deltaY) => {
+    const view = document.querySelector('flutter-view');
+    view.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, deltaY, deltaMode: 0 }));
+    await sleep(250);
+  };
+
+  const positions = () => cards().map((c) => `${c.id}@${Math.round(c.rect.top)}`).join(',');
+
+  const describeCards = () => {
+    const zone = safeZone();
+    return [`cards: ${cards().map((c) => `${c.id}:${Math.round(c.rect.top)}-${Math.round(c.rect.bottom)}`).join(' ')}`,
+      `tap zone: ${Math.round(zone.top)}-${Math.round(zone.bottom)} of ${window.innerHeight}`].join('\n');
+  };
+
+  // Open the card at `index` (0 = top of the list). `label` names the
+  // character for error messages.
+  const openCard = async (index, label) => {
+    const fail = (reason) => ({ ok: false, reason, details: `${describeCards()}\nwanted index ${index}\n${describeScreen(label)}` });
+    if (!(await ensureSemantics())) return fail("Couldn't switch on the app's accessibility layer.");
+    let list = cards();
+    for (let waited = 0; !list.length && waited < 2000; waited += 100) {
+      await sleep(100);
+      list = cards();
+    }
+    if (!list.length) return fail("Couldn't find any character cards. Open the app's Characters page first, then try again.");
+
+    const x = list[0].rect.left + list[0].rect.width / 2;
+    const midY = (safeZone().top + safeZone().bottom) / 2;
+
+    // Scroll to the top; the scroll stops at the start of the list.
+    for (let i = 0, before = null; i < 10 && before !== positions(); i++) {
+      before = positions();
+      await wheelAt(x, midY, -100000);
+    }
+
+    list = cards();
+    const pitch = list.length > 1 ? list[1].rect.top - list[0].rect.top : list[0].rect.height + 8;
+    const known = new Map(list.map((c, i) => [c.id, i]));
+
+    for (let step = 0; step < 80; step++) {
+      list = cards();
+      // Number any new cards from one we've already numbered.
+      const anchor = list.find((c) => known.has(c.id));
+      if (!anchor) return fail(`Lost track of the list while scrolling to "${label}". Try again.`);
+      for (const c of list) known.set(c.id, known.get(anchor.id) + Math.round((c.rect.top - anchor.rect.top) / pitch));
+
+      const zone = safeZone();
+      const target = list.find((c) => known.get(c.id) === index);
+      if (target && target.rect.top >= zone.top && target.rect.bottom <= zone.bottom) {
+        // Tap the portrait on the card's left: part of the card's tap area,
+        // and not a field or button.
+        const r = target.rect;
+        await tapAt(r.left + Math.min(80, r.width / 4), r.top + r.height / 2);
+        return { ok: true };
+      }
+
+      const indices = list.map((c) => known.get(c.id));
+      const down = target ? target.rect.bottom > zone.bottom : index > Math.max(...indices);
+      const before = positions();
+      await wheelAt(x, midY, (down ? 1 : -1) * Math.max(40, Math.min(pitch, zone.bottom - zone.top - pitch)));
+      if (positions() === before) {
+        return fail(target
+          ? `Couldn't scroll "${label}" fully into view. Make the window taller and try again.`
+          : `"${label}" isn't where expected in the app's list. Reload the page so the folders panel has the latest list, then try again.`);
+      }
+    }
+    return fail(`Couldn't reach "${label}" in the list.`);
+  };
+
   // A compact description of what's on screen, for bug reports.
   const describeScreen = (name) => {
     const nodes = semanticsNodes();
@@ -200,5 +298,5 @@
   };
 
   window.MSCFolders = window.MSCFolders || {};
-  window.MSCFolders.opener = { openItem, ensureSemantics, describeScreen, tapAt, semanticsNodes, ownLabel, normalize };
+  window.MSCFolders.opener = { openItem, openCard, ensureSemantics, describeScreen, tapAt, semanticsNodes, ownLabel, normalize };
 })();

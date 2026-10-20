@@ -28,8 +28,8 @@ const mapsRef = ref('users/u1/maps', 'collection');
 
 const SNAPS = new Map([
   [charsRef, { docs: [
-    doc('users/u1/characters/a', { id: 'a', name: 'Ripley', characterClass: 'Teamster', strength: 30, notes: 'secret' }),
-    doc('users/u1/characters/b', { id: 'b', name: 'Ash', characterClass: 'Android', characterClassOverride: 'Science Officer', creationComplete: false, mode: 'npc' }),
+    doc('users/u1/characters/a', { id: 'a', name: 'Ripley ', characterClass: 'Teamster', strength: 30, health: 10, wounds: 0, maxWounds: 2, notes: 'secret' }),
+    doc('users/u1/characters/b', { id: 'b', name: 'Ash', characterClass: 'Android', characterClassOverride: 'Science Officer', creationComplete: false, mode: 'npc', wounds: 0, maxWounds: 0 }),
   ] }],
   [shipsRef, { docs: [
     doc('users/u1/ships/s1', { id: 's1', shipIdentifier: 'Nostromo', make: 'Lockmart', model: 'CM-88B', hullMax: 40, cargo: { secret: 1 } }),
@@ -73,13 +73,14 @@ const msgs = JSON.parse(JSON.stringify(posted.map(({ source, ...m }) => (assert.
 const byType = (type, kind) => msgs.filter((m) => m.type === type && m.kind === kind);
 
 assert.deepEqual(msgs.filter((m) => m.type === 'local'), [
-  { type: 'local', kind: 'characters', items: [{ id: 'l1', name: 'Local Larry', subtitle: 'Marine', draft: false, npc: false }] },
+  { type: 'local', kind: 'characters', items: [{ id: 'l1', name: 'Local Larry', subtitle: 'Marine', draft: false, npc: false, dead: true, sortName: 'Local Larry', classOverride: '' }] },
   { type: 'local', kind: 'ships', items: [] },
   { type: 'local', kind: 'maps', items: [] }]);
 assert.deepEqual(msgs.find((m) => m.type === 'hook-ready'), { type: 'hook-ready' });
 assert.deepEqual(byType('replace', 'characters')[0].items, [
-  { id: 'a', name: 'Ripley', subtitle: 'Teamster', draft: false, npc: false },
-  { id: 'b', name: 'Ash', subtitle: 'Science Officer', draft: true, npc: true }]);
+  { id: 'a', name: 'Ripley', subtitle: 'Teamster', draft: false, npc: false, dead: false, sortName: 'Ripley ', classOverride: '' },
+  // An NPC with no wound track counts as dead, as in the app.
+  { id: 'b', name: 'Ash', subtitle: 'Science Officer', draft: true, npc: true, dead: true, sortName: 'Ash', classOverride: 'Science Officer' }]);
 assert.deepEqual(byType('replace', 'ships')[0].items, [
   { id: 's1', name: 'Nostromo', subtitle: 'Lockmart CM-88B', draft: false },
   { id: 's2', name: 'Weyland Hauler', subtitle: 'Freighter', draft: false }]);

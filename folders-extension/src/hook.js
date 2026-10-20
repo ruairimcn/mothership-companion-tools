@@ -18,7 +18,18 @@
 
   // How to read each kind of record, from Firestore or the local cache.
   const text = (v) => (typeof v === 'string' ? v.trim() : '');
+  const num = (v) => (typeof v === 'number' ? v : 0);
   const idOf = (id, d) => (typeof d.id === 'string' && d.id ? d.id : id);
+
+  // The app's own test for a dead character, which it sorts to the end of
+  // the list. NPCs without a wound track count as dead once wounds >= 0.
+  const isDead = (d) => {
+    const health = num(d.health);
+    const wounds = num(d.wounds);
+    const maxWounds = num(d.maxWounds);
+    if (d.mode !== 'npc' || maxWounds > 0) return health <= 0 && wounds >= maxWounds;
+    return wounds >= maxWounds;
+  };
 
   const KINDS = {
     characters: {
@@ -34,6 +45,10 @@
         draft: d.creationComplete === false,
         // NPCs live in the same collection; the panel files them separately.
         npc: d.mode === 'npc',
+        // What the app sorts its character list by (see sortKey in panel.js).
+        dead: isDead(d),
+        sortName: typeof d.name === 'string' ? d.name : '',
+        classOverride: typeof d.characterClassOverride === 'string' ? d.characterClassOverride : '',
       }),
     },
     ships: {
@@ -177,7 +192,7 @@
       if (!match || !data || typeof data !== 'object') return;
       const [, uid, kind, id] = match;
       const name = data[KINDS[kind].nameField];
-      if (typeof name === 'string' && name.trim()) post({ type: 'rename', uid, kind, id, name: name.trim() });
+      if (typeof name === 'string' && name.trim()) post({ type: 'rename', uid, kind, id, name });
     });
     return result;
   };

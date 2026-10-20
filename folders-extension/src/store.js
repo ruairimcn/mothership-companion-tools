@@ -149,7 +149,11 @@
       });
     } else if (msg.type === 'rename' && typeof msg.name === 'string') {
       lists.forEach((list) => {
-        if (list.items[msg.id]) list.items[msg.id] = { ...list.items[msg.id], name: msg.name };
+        if (!list.items[msg.id]) return;
+        const renamed = { ...list.items[msg.id], name: msg.name.trim() };
+        // Keep the character list order in step (see appOrder in panel.js).
+        if ('sortName' in renamed) renamed.sortName = msg.name;
+        list.items[msg.id] = renamed;
       });
     } else if (msg.type === 'delete' && Array.isArray(msg.ids)) {
       lists.forEach((list) => msg.ids.forEach((id) => { delete list.items[id]; }));

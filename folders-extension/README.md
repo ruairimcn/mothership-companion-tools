@@ -37,12 +37,13 @@ The app is Flutter web: everything is drawn on a `<canvas>`, so there's no HTML 
    - Characters show their name and class, and are split into player characters and NPCs by their `mode`; maps show their title and module.
    - Ships have no single name field, so the drawer shows the ship identifier, or the make and model if that's blank.
 2. **Shows its own drawer** (`src/panel.js`, `src/store.js`) in a Shadow DOM over the app. `src/page.js` works out which list the app is showing from its accessibility tree (the PLAYER CHARACTERS / NPCS tabs, and which items' names are on screen), since the app's navigation doesn't change the URL.
-3. **Opens items** (`src/opener.js`) by finding the element labelled with the item's name in Flutter's accessibility tree (real DOM elements with labels) and clicking it, or, for names shown in a text field, tapping the card just above the field.
+3. **Opens items** (`src/opener.js`). Ships and maps: it finds the element labelled with the item's name in Flutter's accessibility tree (real DOM elements with labels) and clicks it. Characters: their cards show the name in a text field, whose text Flutter never puts in the DOM, so the panel sorts the list the way the app does (living before dead, then by name, then by class override) to get the character's position. The opener then scrolls the app's list to the top with mouse-wheel events, counts cards down to that position, and taps the card's portrait.
 
 ## Known limits
 
 - The app's own lists stay flat; folders live in the drawer.
-- "Open in app" needs the matching list visible in the app. If two items share a name, it opens the first one it finds.
+- "Open in app" needs the matching list visible in the app. If two ships or maps share a name, it opens the first one it finds.
+- Characters are opened by position, so if the drawer's list is out of date (for example, a character was added on another device), it could open the wrong one. Reloading the page refreshes the list.
 - The extension switches on the app's accessibility layer when the app loads, so it can see which page is showing. It's a standard Flutter mode, but can make the app slightly slower. If it can't be switched on, the drawer shows Characters / NPCs / Ships / Maps tabs instead.
 - It relies on app internals (the `firebase_firestore` global, Firestore paths, labels). An app update could break it; the drawer would then show "Waiting for the app to load your characters".
 

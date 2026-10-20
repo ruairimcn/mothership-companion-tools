@@ -260,7 +260,11 @@
     let result;
     if (isCharacterKind(ui.kind)) {
       // Character cards don't expose names, so open by position in the list.
-      result = await opener.openCard(index, item.name || `this ${kindInfo().singular}`);
+      result = await opener.openCard(index, item.name || `this ${kindInfo().singular}`, {
+        total: itemsOf(ui.kind).length,
+        // The click is checked in the background; report it if it didn't take.
+        onLateFailure: (late) => toast(late.reason, { label: 'Copy details', run: () => copyDetails(late.details) }),
+      });
     } else {
       // The tile may show the name or, for unnamed ships, the make and model.
       const names = [item.name, item.subtitle].filter(Boolean);

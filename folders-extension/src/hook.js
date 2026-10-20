@@ -230,6 +230,40 @@
     return copy;
   };
 
+  // ---- Keep drawer input away from the app -------------------------------------
+  //
+  // The app listens for pointer input on the whole window, so it also sees
+  // clicks and mouse moves inside the folders drawer. Besides being noise,
+  // each one makes Flutter ignore accessibility clicks (which the drawer uses
+  // to open things) for half a second. This runs before the app's own code,
+  // so wrap the window listeners it registers to skip events from the drawer.
+
+  const PANEL_ID = 'msc-folders-root';
+  const POINTER_TYPES = new Set(['pointerdown', 'pointermove', 'pointerleave', 'pointerup', 'pointercancel',
+    'touchstart', 'touchend', 'touchmove', 'touchcancel', 'mousedown', 'mousemove', 'mouseleave', 'mouseup', 'wheel']);
+  const fromPanel = (e) => typeof e.composedPath === 'function' && e.composedPath().some((n) => n && n.id === PANEL_ID);
+  const wrappedListeners = new WeakMap();
+  const addListener = EventTarget.prototype.addEventListener;
+  const removeListener = EventTarget.prototype.removeEventListener;
+  const filtered = (target, type, listener) => target === window && POINTER_TYPES.has(type) && typeof listener === 'function';
+
+  EventTarget.prototype.addEventListener = function (type, listener, options) {
+    if (!filtered(this, type, listener)) return addListener.call(this, type, listener, options);
+    let wrapper = wrappedListeners.get(listener);
+    if (!wrapper) {
+      wrapper = function (event) {
+        if (fromPanel(event)) return undefined;
+        return listener.call(this, event);
+      };
+      wrappedListeners.set(listener, wrapper);
+    }
+    return addListener.call(this, type, wrapper, options);
+  };
+  EventTarget.prototype.removeEventListener = function (type, listener, options) {
+    const wrapper = filtered(this, type, listener) && wrappedListeners.get(listener);
+    return removeListener.call(this, type, wrapper || listener, options);
+  };
+
   // ---- Local caches (signed-out data) -----------------------------------------
 
   // shared_preferences keeps the hydrated JSON as a JSON-encoded string.

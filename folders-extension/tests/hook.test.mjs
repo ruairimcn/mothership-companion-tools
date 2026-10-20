@@ -10,13 +10,13 @@ const storage = {
   'flutter.CharacterPool': JSON.stringify(JSON.stringify({ l1: { id: 'l1', name: 'Local Larry', characterClass: 'Marine', mode: 'x', notes: 'secret' } })),
   'flutter.MapCubit': JSON.stringify('{}'),
 };
-const window = {
+const window = Object.assign(new EventTarget(), {
   location: { origin: 'https://mothershipcompanion.com' },
   postMessage: (m) => posted.push(m),
   localStorage: { getItem: (k) => storage[k] ?? null },
-};
+});
 const timers = [];
-const ctx = vm.createContext({ window, console, setTimeout: (fn) => timers.push(fn), setInterval: () => 0 });
+const ctx = vm.createContext({ window, console, EventTarget, setTimeout: (fn) => timers.push(fn), setInterval: () => 0 });
 vm.runInContext(fs.readFileSync(new URL('../src/hook.js', import.meta.url), 'utf8'), ctx);
 timers.forEach((fn) => fn()); // the initial local-cache report
 
@@ -94,4 +94,20 @@ assert.deepEqual(byType('delete', 'characters'), [{ type: 'delete', uid: 'u1', k
 assert.ok(!JSON.stringify(msgs).includes('secret'), 'no full records leaked');
 assert.ok(!JSON.stringify(msgs).includes('Token'), 'other collections ignored');
 assert.deepEqual(calls, ['getDocs', 'getDocs', 'getDocs', 'getDocs', 'onSnapshot', 'appNext', 'setDoc', 'setDoc', 'updateDoc', 'updateDoc', 'deleteDoc', 'setDoc']);
+// The app's window pointer listeners don't see events from the folders drawer.
+const seen = [];
+const appListener = (e) => seen.push(e.label);
+window.addEventListener('pointerdown', appListener, { capture: true });  // (Node mishandles a bare `true` here)
+const pointer = (label, path) => Object.assign(new Event('pointerdown'), { label, composedPath: () => path });
+window.dispatchEvent(pointer('canvas', [{ id: '' }, window]));
+window.dispatchEvent(pointer('drawer', [{ id: 'button' }, { id: 'msc-folders-root' }, window]));
+assert.deepEqual(seen, ['canvas']);
+window.removeEventListener('pointerdown', appListener, { capture: true });
+window.dispatchEvent(pointer('after removal', [window]));
+assert.deepEqual(seen, ['canvas'], 'removeEventListener still works on wrapped listeners');
+const keys = [];
+window.addEventListener('keydown', (e) => keys.push(e.type));
+window.dispatchEvent(Object.assign(new Event('keydown'), { composedPath: () => [{ id: 'msc-folders-root' }] }));
+assert.deepEqual(keys, ['keydown'], 'non-pointer listeners are untouched');
+
 console.log('hook tests passed');

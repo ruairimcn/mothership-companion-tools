@@ -150,7 +150,8 @@
   // Character cards show the name in a disabled text field, and Flutter never
   // puts a field's text in the DOM, so cards can't be found by name. Instead
   // the panel works out the character's position in the app's sorted list,
-  // and we count cards: scroll the list to the top, then step down.
+  // and we find the card at that position: from the list's scroll offset
+  // when we can read it, or by scrolling to the top and counting down.
 
   const FIELD = 'input[data-semantics-role="text-field"], textarea[data-semantics-role="text-field"]';
   const fieldCount = (el) => (el ? el.querySelectorAll(FIELD).length : 0);
@@ -180,18 +181,32 @@
     return { top: top + 4, bottom: window.innerHeight - 72 };
   };
 
-  const wheelAt = async (x, y, deltaY) => {
-    const view = document.querySelector('flutter-view');
-    view.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, deltaY, deltaMode: 0 }));
-    await sleep(250);
+  const positions = () => cards().map((c) => `${c.id}@${Math.round(c.rect.top)}`).join(',');
+
+  // Wait until the cards move (or `maxMs` passes), then for them to settle.
+  const waitForMove = async (before, maxMs) => {
+    for (let waited = 0; positions() === before && waited < maxMs; waited += 30) await sleep(30);
+    for (let i = 0, prev = null; i < 10; i++) {
+      const now = positions();
+      if (now === prev) return;
+      prev = now;
+      await sleep(40);
+    }
   };
 
-  const positions = () => cards().map((c) => `${c.id}@${Math.round(c.rect.top)}`).join(',');
+  const wheelAt = async (x, y, deltaY) => {
+    const before = positions();
+    const view = document.querySelector('flutter-view');
+    view.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, deltaY, deltaMode: 0 }));
+    await waitForMove(before, 250);
+  };
 
   const describeCards = () => {
     const zone = safeZone();
+    const region = cards().length ? scrollRegion(cards()[0]) : null;
     return [`cards: ${cards().map((c) => `${c.id}:${Math.round(c.rect.top)}-${Math.round(c.rect.bottom)}`).join(' ')}`,
-      `tap zone: ${Math.round(zone.top)}-${Math.round(zone.bottom)} of ${window.innerHeight}`].join('\n');
+      `tap zone: ${Math.round(zone.top)}-${Math.round(zone.bottom)} of ${window.innerHeight}`,
+      `scroll region: ${region ? `top ${Math.round(region.getBoundingClientRect().top)}, scrollTop ${region.scrollTop} of ${region.scrollHeight - region.clientHeight}` : 'none'}`].join('\n');
   };
 
   // The whole card is one tap area with its own accessibility element; a
@@ -212,60 +227,109 @@
     tapAt(r.left + Math.min(80, r.width / 4), r.top + r.height / 2);
   };
 
-  // Flutter ignores accessibility clicks for a moment after any pointer
-  // input (mouse moves and clicks anywhere, wheel scrolls), preferring the
-  // pointer events. Track that input the way it does, and wait it out.
-  const QUIET_MS = 700;
+  // Flutter ignores accessibility clicks and scrolls for half a second after
+  // pointer input it sees (mouse moves and clicks over the app, wheel
+  // scrolls). The hook hides input inside the drawer from it, so track the
+  // rest the same way and wait it out when needed.
+  const QUIET_MS = 550;
   let lastInput = 0;
+  const fromPanel = (e) => e.composedPath().some((n) => n && n.id === 'msc-folders-root');
   ['pointerdown', 'pointermove', 'pointerup', 'mousedown', 'mousemove', 'mouseup', 'touchstart', 'touchend', 'wheel']
-    .forEach((type) => window.addEventListener(type, () => { lastInput = Date.now(); }, true));
+    .forEach((type) => window.addEventListener(type, (e) => { if (!fromPanel(e)) lastInput = Date.now(); }, true));
 
   const waitForQuiet = async () => {
     const giveUpAt = Date.now() + 3000; // a mouse that never stops moving
     while (Date.now() - lastInput < QUIET_MS && Date.now() < giveUpAt) await sleep(QUIET_MS - (Date.now() - lastInput) + 20);
-    // And let any scrolling come to rest.
-    for (let i = 0, prev = null; i < 10; i++) {
-      const now = positions();
-      if (now === prev) break;
-      prev = now;
-      await sleep(120);
-    }
   };
 
   const onCharactersPage = () => semanticsNodes().some((el) => /^(player characters|npcs)$/.test(normalize(ownLabel(el))));
+  const stillListed = (card) => cards().some((c) => c.id === card.id) && onCharactersPage();
 
-  // Open a card, checking that the app responded: if the card is still on
-  // the list afterwards, try again, then fall back to a screen tap.
-  const activateCard = async (card) => {
-    const attempts = [tapCard, tapCard, tapPortrait];
-    for (const attempt of attempts) {
-      await waitForQuiet();
-      const current = cards().find((c) => c.id === card.id);
-      // Gone already, or the page changed: something opened.
-      if (!current || !onCharactersPage()) return true;
-      attempt(current);
-      await sleep(800);
-      if (!cards().some((c) => c.id === card.id) || !onCharactersPage()) return true;
-    }
-    return false;
+  // Open a card. Returns as soon as it's clicked; if the card is still on
+  // the list shortly after, retry (then fall back to a screen tap) in the
+  // background, and call onLateFailure if nothing worked.
+  const activateCard = async (card, onLateFailure) => {
+    await waitForQuiet();
+    tapCard(cards().find((c) => c.id === card.id) || card);
+    (async () => {
+      for (const retry of [tapCard, tapPortrait]) {
+        await sleep(600);
+        if (!stillListed(card)) return;
+        await waitForQuiet();
+        const current = cards().find((c) => c.id === card.id);
+        if (current && onCharactersPage()) retry(current);
+      }
+      await sleep(600);
+      if (stillListed(card) && onLateFailure) onLateFailure();
+    })();
   };
 
-  // Open the card at `index` (0 = top of the list). `label` names the
-  // character for error messages.
-  const openCard = async (index, label) => {
-    const fail = (reason) => ({ ok: false, reason, details: `${describeCards()}\nwanted index ${index}\n${describeScreen(label)}` });
-    if (!(await ensureSemantics())) return fail("Couldn't switch on the app's accessibility layer.");
-    let list = cards();
-    for (let waited = 0; !list.length && waited < 2000; waited += 100) {
-      await sleep(100);
-      list = cards();
+  // The list's scroll container. Flutter keeps its scrollTop equal to the
+  // list's scroll offset, which tells us where every card sits in the list.
+  const scrollRegion = (card) => {
+    for (let p = parentNode(card.el); p; p = parentNode(p)) {
+      if (p.scrollHeight > p.clientHeight + 2) return p;
     }
-    if (!list.length) return fail("Couldn't find any character cards. Open the app's Characters page first, then try again.");
+    return null;
+  };
 
+  // Mostly on screen is enough: the last cards can't scroll clear of the
+  // bottom button bar.
+  const isVisible = (card, zone) => card.rect.top >= zone.top - 2 && card.rect.top + card.rect.height / 2 <= window.innerHeight;
+
+  // Fast path: number the cards from the scroll offset, scroll straight to
+  // the target if needed, and click. Returns the card, or null to fall back.
+  const findByOffset = async (index, total) => {
+    const layout = () => {
+      const list = cards();
+      if (!list.length) return null;
+      const region = scrollRegion(list[0]);
+      if (!region) {
+        // Nothing to scroll: every card is built, in order. (If some are
+        // missing, the list is built lazily after all; use the slow path.)
+        return list.length === total ? { list, region: null, indexOf: (c) => list.indexOf(c) } : null;
+      }
+      const pitch = list.length > 1 ? list[1].rect.top - list[0].rect.top : list[0].rect.height;
+      if (pitch <= 0) return null;
+      const regionTop = region.getBoundingClientRect().top;
+      const contentY = (c) => c.rect.top - regionTop + region.scrollTop;
+      // A card above the start of the list means the offset isn't the list's
+      // real scroll position (an app version that doesn't keep it in sync).
+      if (contentY(list[0]) < -2) return null;
+      const pad = contentY(list[0]) % pitch; // space above the first card
+      return { list, region, pitch, pad, regionTop, indexOf: (c) => Math.round((contentY(c) - pad) / pitch) };
+    };
+
+    let l = layout();
+    if (!l) return null;
+    const zone = safeZone();
+    let target = l.list.find((c) => l.indexOf(c) === index);
+    if (target && isVisible(target, zone)) return target;
+    if (!l.region) return null;
+
+    // Scroll so the target sits just below the tabs.
+    const max = l.region.scrollHeight - l.region.clientHeight;
+    const want = Math.max(0, Math.min(max, l.pad + index * l.pitch - (zone.top + 8 - l.regionTop)));
+    await waitForQuiet();
+    l.region.scrollTop = want;
+    // The app builds newly scrolled-in cards over the next frame or two.
+    for (let waited = 0; waited <= 600; waited += 30) {
+      await sleep(30);
+      l = layout();
+      target = l && l.list.find((c) => l.indexOf(c) === index);
+      if (target && (isVisible(target, zone) || (target.rect.bottom > zone.top && target.rect.top < window.innerHeight))) return target;
+    }
+    return null;
+  };
+
+  // Slow path: scroll to the top with the mouse wheel, then step down,
+  // numbering cards as they appear.
+  const findByStepping = async (index) => {
+    let list = cards();
+    if (!list.length) return null;
     const x = list[0].rect.left + list[0].rect.width / 2;
     const midY = (safeZone().top + safeZone().bottom) / 2;
 
-    // Scroll to the top; the scroll stops at the start of the list.
     for (let i = 0, before = null; i < 10 && before !== positions(); i++) {
       before = positions();
       await wheelAt(x, midY, -100000);
@@ -277,20 +341,15 @@
 
     for (let step = 0; step < 80; step++) {
       list = cards();
+      if (!list.length) return null;
       // Number any new cards from one we've already numbered.
       const anchor = list.find((c) => known.has(c.id));
-      if (!anchor) return fail(`Lost track of the list while scrolling to "${label}". Try again.`);
+      if (!anchor) return null;
       for (const c of list) known.set(c.id, known.get(anchor.id) + Math.round((c.rect.top - anchor.rect.top) / pitch));
 
       const zone = safeZone();
       const target = list.find((c) => known.get(c.id) === index);
-      // Mostly on screen is enough: the last cards can't scroll clear of the
-      // bottom button bar.
-      const visible = target && target.rect.top >= zone.top - 2
-        && target.rect.top + target.rect.height / 2 <= window.innerHeight;
-      if (visible) {
-        return (await activateCard(target)) ? { ok: true } : fail(`The app didn't respond to opening "${label}".`);
-      }
+      if (target && isVisible(target, zone)) return target;
 
       const indices = list.map((c) => known.get(c.id));
       const down = target ? target.rect.top > zone.top : index > Math.max(...indices);
@@ -298,13 +357,33 @@
       await wheelAt(x, midY, (down ? 1 : -1) * Math.max(40, Math.min(pitch, zone.bottom - zone.top - pitch)));
       if (positions() === before) {
         // The list can't scroll further; take the card if it's showing at all.
-        if (target && target.rect.bottom > zone.top && target.rect.top < window.innerHeight) {
-          return (await activateCard(target)) ? { ok: true } : fail(`The app didn't respond to opening "${label}".`);
-        }
-        return fail(`"${label}" isn't where expected in the app's list. Reload the page so the folders panel has the latest list, then try again.`);
+        return target && target.rect.bottom > zone.top && target.rect.top < window.innerHeight ? target : null;
       }
     }
-    return fail(`Couldn't reach "${label}" in the list.`);
+    return null;
+  };
+
+  // Open the card at `index` (0 = top of the list) of `total`. `label` names
+  // the character for error messages; onLateFailure is called if the click
+  // turns out not to have opened anything.
+  const openCard = async (index, label, { total = -1, onLateFailure } = {}) => {
+    const details = () => `${describeCards()}\nwanted index ${index}\n${describeScreen(label)}`;
+    const fail = (reason) => ({ ok: false, reason, details: details() });
+    if (!(await ensureSemantics())) return fail("Couldn't switch on the app's accessibility layer.");
+    for (let waited = 0; !cards().length && waited < 2000; waited += 100) await sleep(100);
+    if (!cards().length) return fail("Couldn't find any character cards. Open the app's Characters page first, then try again.");
+
+    const target = (await findByOffset(index, total)) || (await findByStepping(index));
+    if (!target) {
+      return fail(`"${label}" isn't where expected in the app's list. Reload the page so the folders panel has the latest list, then try again.`);
+    }
+    const lateDetails = details();
+    await activateCard(target, onLateFailure && (() => onLateFailure({
+      ok: false,
+      reason: `The app didn't respond to opening "${label}".`,
+      details: lateDetails,
+    })));
+    return { ok: true };
   };
 
   // A compact description of what's on screen, for bug reports.

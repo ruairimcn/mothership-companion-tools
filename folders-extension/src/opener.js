@@ -156,13 +156,19 @@
   const fieldCount = (el) => (el ? el.querySelectorAll(FIELD).length : 0);
   const parentNode = (el) => el.parentElement && el.parentElement.closest('flt-semantics');
 
-  // A card is the largest node holding exactly its two fields (name, class).
-  const cards = () =>
-    semanticsNodes()
-      .filter((el) => fieldCount(el) === 2 && fieldCount(parentNode(el)) !== 2)
+  // A card is the tappable node holding exactly its two fields (name,
+  // class). The app wraps each card in an untappable node with the same
+  // fields, so prefer the tappable one; without one, take the outermost.
+  const cards = () => {
+    const withFields = semanticsNodes().filter((el) => fieldCount(el) === 2);
+    const tappable = withFields.filter((el) => el.matches(TAPPABLE) && !isScreenSized(el)
+      && !withFields.some((other) => other !== el && other.contains(el) && other.matches(TAPPABLE)));
+    const picked = tappable.length ? tappable : withFields.filter((el) => fieldCount(parentNode(el)) !== 2);
+    return picked
       .map((el) => ({ el, id: el.id, rect: el.getBoundingClientRect() }))
       .filter((c) => c.rect.height > 0)
       .sort((a, b) => a.rect.top - b.rect.top);
+  };
 
   // The part of the screen where cards can be tapped: below the PLAYER
   // CHARACTERS / NPCS tabs and above the bottom button bar.

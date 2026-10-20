@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Mothership Companion Folders",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Group your Mothership Companion characters, NPCs, ships and maps into folders.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAjuB34ELmiCL+jgpgt0nIc1KrJK91kWdcfs6PqbhLbhYQ0bxQCvrIbvWT3mLd3arat2Aea3wmwr3gVskQJVucaaVNxarLpjCc0z2lepIBymfWq1wtn3pdHTUJtmNyv8chtCCzNcpJsJ5L1O0rTV/rSm3WgkPgOSpqfnYuYYIvkAECn538VW4+6GXpI9hMumcZeFvCxrihUA0M2Tlpr8tE5SEcgrIxBQeWrsm+uLNI09s/1K9VqWL1PdLbYztQFFfHJA6PsxuK7Jq55ko/pCJyS/BUSdCnVtdPMzgyEKnD33TswkuY51koNe9XtSVlkpjfoBSztNZJbatuFOwq9XMEUQIDAQAB",
   "permissions": [

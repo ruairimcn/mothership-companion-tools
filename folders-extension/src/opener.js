@@ -188,6 +188,20 @@
       `tap zone: ${Math.round(zone.top)}-${Math.round(zone.bottom)} of ${window.innerHeight}`].join('\n');
   };
 
+  // The whole card is one tap area with its own accessibility element; a
+  // click on that is turned into a tap by Flutter (screen taps sent to the
+  // canvas don't reliably reach it). Fall back to a screen tap on the
+  // portrait if the card has no tappable element.
+  const tapCard = (card) => {
+    const el = card.el.matches(TAPPABLE) ? card.el : card.el.closest(TAPPABLE);
+    if (el && !isScreenSized(el)) {
+      el.click();
+      return;
+    }
+    const r = card.rect;
+    tapAt(r.left + Math.min(80, r.width / 4), r.top + r.height / 2);
+  };
+
   // Open the card at `index` (0 = top of the list). `label` names the
   // character for error messages.
   const openCard = async (index, label) => {
@@ -222,22 +236,26 @@
 
       const zone = safeZone();
       const target = list.find((c) => known.get(c.id) === index);
-      if (target && target.rect.top >= zone.top && target.rect.bottom <= zone.bottom) {
-        // Tap the portrait on the card's left: part of the card's tap area,
-        // and not a field or button.
-        const r = target.rect;
-        await tapAt(r.left + Math.min(80, r.width / 4), r.top + r.height / 2);
+      // Mostly on screen is enough: the last cards can't scroll clear of the
+      // bottom button bar.
+      const visible = target && target.rect.top >= zone.top - 2
+        && target.rect.top + target.rect.height / 2 <= window.innerHeight;
+      if (visible) {
+        tapCard(target);
         return { ok: true };
       }
 
       const indices = list.map((c) => known.get(c.id));
-      const down = target ? target.rect.bottom > zone.bottom : index > Math.max(...indices);
+      const down = target ? target.rect.top > zone.top : index > Math.max(...indices);
       const before = positions();
       await wheelAt(x, midY, (down ? 1 : -1) * Math.max(40, Math.min(pitch, zone.bottom - zone.top - pitch)));
       if (positions() === before) {
-        return fail(target
-          ? `Couldn't scroll "${label}" fully into view. Make the window taller and try again.`
-          : `"${label}" isn't where expected in the app's list. Reload the page so the folders panel has the latest list, then try again.`);
+        // The list can't scroll further; take the card if it's showing at all.
+        if (target && target.rect.bottom > zone.top && target.rect.top < window.innerHeight) {
+          tapCard(target);
+          return { ok: true };
+        }
+        return fail(`"${label}" isn't where expected in the app's list. Reload the page so the folders panel has the latest list, then try again.`);
       }
     }
     return fail(`Couldn't reach "${label}" in the list.`);
@@ -298,5 +316,9 @@
   };
 
   window.MSCFolders = window.MSCFolders || {};
-  window.MSCFolders.opener = { openItem, openCard, ensureSemantics, describeScreen, tapAt, semanticsNodes, ownLabel, normalize };
+  // Diagnostics on demand (Shift+click a name in the drawer).
+  const debugInfo = (label, index) =>
+    [index == null ? null : `wanted index ${index}`, describeCards(), describeScreen(label)].filter(Boolean).join('\n');
+
+  window.MSCFolders.opener = { openItem, openCard, debugInfo, ensureSemantics, describeScreen, tapAt, semanticsNodes, ownLabel, normalize };
 })();

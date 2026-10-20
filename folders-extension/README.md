@@ -23,7 +23,7 @@ From v0.2 the extension has a fixed ID, so later updates keep your folders even 
 - The drawer follows the app: on the Characters page it shows your player-character folders (or NPC folders when the **NPCS** tab is selected), and on the Ships and Maps pages it shows those folders. Each list has its own folders. On other pages it asks you to open one of those.
 - **+ Folder** creates a folder. ✎ renames, ↑/↓ reorders, ✕ deletes (its characters go back to Unfiled).
 - Drag an item onto a folder to file it, or onto another item to place it just above. The **⋯** menu on each item does the same without dragging.
-- Click a name to open it in the app. This works when the matching list (Characters, Ships or Maps) is on screen in the app. If it can't find it, the message has a **Copy details** button; paste the result into a bug report.
+- Click a name to open it in the app. This works when the matching list (Characters, Ships or Maps) is on screen in the app. If it can't find it, the message has a **Copy details** button; paste the result into a bug report. **Shift+click** a name copies the same details without opening anything.
 - **Export / Import** saves and restores your folders as a JSON file.
 
 Folders are stored only in this browser (`chrome.storage.local`). They are not uploaded and won't show in the mobile apps.
@@ -37,7 +37,7 @@ The app is Flutter web: everything is drawn on a `<canvas>`, so there's no HTML 
    - Characters show their name and class, and are split into player characters and NPCs by their `mode`; maps show their title and module.
    - Ships have no single name field, so the drawer shows the ship identifier, or the make and model if that's blank.
 2. **Shows its own drawer** (`src/panel.js`, `src/store.js`) in a Shadow DOM over the app. `src/page.js` works out which list the app is showing from its accessibility tree (the PLAYER CHARACTERS / NPCS tabs, and which items' names are on screen), since the app's navigation doesn't change the URL.
-3. **Opens items** (`src/opener.js`). Ships and maps: it finds the element labelled with the item's name in Flutter's accessibility tree (real DOM elements with labels) and clicks it. Characters: their cards show the name in a text field, whose text Flutter never puts in the DOM, so the panel sorts the list the way the app does (living before dead, then by name, then by class override) to get the character's position. The opener then scrolls the app's list to the top with mouse-wheel events, counts cards down to that position, and taps the card's portrait.
+3. **Opens items** (`src/opener.js`). Ships and maps: it finds the element labelled with the item's name in Flutter's accessibility tree (real DOM elements with labels) and clicks it. Characters: their cards show the name in a text field, whose text Flutter never puts in the DOM, so the panel sorts the list the way the app does (living before dead, then by name, then by class override) to get the character's position. The opener then scrolls the app's list to the top with mouse-wheel events, counts cards down to that position, and clicks the card's accessibility element, which Flutter turns into a tap.
 
 ## Known limits
 

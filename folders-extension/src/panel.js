@@ -243,11 +243,23 @@
 
   const isCharacterKind = (kind) => kind === 'characters' || kind === 'npcs';
 
-  const openItem = async (item) => {
+  const copyDetails = (details) => copyText(details).then(
+    () => toast('Details copied. Paste them into your bug report.'),
+    () => toast("Couldn't copy. Try again, or press Ctrl+C after selecting the text."));
+
+  const openItem = async (item, event) => {
+    const index = isCharacterKind(ui.kind)
+      ? itemsOf(ui.kind).sort(appOrder).findIndex((c) => c.id === item.id)
+      : null;
+    // Shift+click copies what the extension can see, for bug reports.
+    if (event && event.shiftKey) {
+      await opener.ensureSemantics();
+      copyDetails(opener.debugInfo(item.name, index));
+      return;
+    }
     let result;
     if (isCharacterKind(ui.kind)) {
       // Character cards don't expose names, so open by position in the list.
-      const index = itemsOf(ui.kind).sort(appOrder).findIndex((c) => c.id === item.id);
       result = await opener.openCard(index, item.name || `this ${kindInfo().singular}`);
     } else {
       // The tile may show the name or, for unnamed ships, the make and model.
@@ -259,12 +271,7 @@
       result = await opener.openItem(names, kindInfo().label);
     }
     if (!result.ok) {
-      toast(result.reason, result.details && {
-        label: 'Copy details',
-        run: () => copyText(result.details).then(
-          () => toast('Details copied. Paste them into your bug report.'),
-          () => toast("Couldn't copy. Try again, or press Ctrl+C after selecting the text.")),
-      });
+      toast(result.reason, result.details && { label: 'Copy details', run: () => copyDetails(result.details) });
     }
   };
 
@@ -324,7 +331,7 @@
       },
     },
     h('span', { class: 'grip', 'aria-hidden': 'true' }, '⋮⋮'),
-    h('button', { class: 'who', title: 'Open in the app', onClick: () => openItem(item) },
+    h('button', { class: 'who', title: 'Open in the app (Shift+click: copy details for a bug report)', onClick: (e) => openItem(item, e) },
       h('span', { class: 'iname' }, item.name || '(unnamed)', item.draft ? h('span', { class: 'draft' }, 'draft') : null),
       item.subtitle ? h('span', { class: 'isub' }, item.subtitle) : null),
     moveSelect(item, folderId));

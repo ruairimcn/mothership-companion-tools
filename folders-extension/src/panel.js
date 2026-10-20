@@ -270,6 +270,8 @@
       }
       result = await opener.openItem(names, kindInfo().label);
     }
+    // Get out of the way of whatever just opened.
+    if (result.ok) setOpen(false);
     if (!result.ok) {
       toast(result.reason, result.details && { label: 'Copy details', run: () => copyDetails(result.details) });
     }

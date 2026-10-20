@@ -198,8 +198,50 @@
       el.click();
       return;
     }
+    tapPortrait(card);
+  };
+
+  const tapPortrait = (card) => {
     const r = card.rect;
     tapAt(r.left + Math.min(80, r.width / 4), r.top + r.height / 2);
+  };
+
+  // Flutter ignores accessibility clicks for a moment after any pointer
+  // input (mouse moves and clicks anywhere, wheel scrolls), preferring the
+  // pointer events. Track that input the way it does, and wait it out.
+  const QUIET_MS = 700;
+  let lastInput = 0;
+  ['pointerdown', 'pointermove', 'pointerup', 'mousedown', 'mousemove', 'mouseup', 'touchstart', 'touchend', 'wheel']
+    .forEach((type) => window.addEventListener(type, () => { lastInput = Date.now(); }, true));
+
+  const waitForQuiet = async () => {
+    const giveUpAt = Date.now() + 3000; // a mouse that never stops moving
+    while (Date.now() - lastInput < QUIET_MS && Date.now() < giveUpAt) await sleep(QUIET_MS - (Date.now() - lastInput) + 20);
+    // And let any scrolling come to rest.
+    for (let i = 0, prev = null; i < 10; i++) {
+      const now = positions();
+      if (now === prev) break;
+      prev = now;
+      await sleep(120);
+    }
+  };
+
+  const onCharactersPage = () => semanticsNodes().some((el) => /^(player characters|npcs)$/.test(normalize(ownLabel(el))));
+
+  // Open a card, checking that the app responded: if the card is still on
+  // the list afterwards, try again, then fall back to a screen tap.
+  const activateCard = async (card) => {
+    const attempts = [tapCard, tapCard, tapPortrait];
+    for (const attempt of attempts) {
+      await waitForQuiet();
+      const current = cards().find((c) => c.id === card.id);
+      // Gone already, or the page changed: something opened.
+      if (!current || !onCharactersPage()) return true;
+      attempt(current);
+      await sleep(800);
+      if (!cards().some((c) => c.id === card.id) || !onCharactersPage()) return true;
+    }
+    return false;
   };
 
   // Open the card at `index` (0 = top of the list). `label` names the
@@ -241,8 +283,7 @@
       const visible = target && target.rect.top >= zone.top - 2
         && target.rect.top + target.rect.height / 2 <= window.innerHeight;
       if (visible) {
-        tapCard(target);
-        return { ok: true };
+        return (await activateCard(target)) ? { ok: true } : fail(`The app didn't respond to opening "${label}".`);
       }
 
       const indices = list.map((c) => known.get(c.id));
@@ -252,8 +293,7 @@
       if (positions() === before) {
         // The list can't scroll further; take the card if it's showing at all.
         if (target && target.rect.bottom > zone.top && target.rect.top < window.innerHeight) {
-          tapCard(target);
-          return { ok: true };
+          return (await activateCard(target)) ? { ok: true } : fail(`The app didn't respond to opening "${label}".`);
         }
         return fail(`"${label}" isn't where expected in the app's list. Reload the page so the folders panel has the latest list, then try again.`);
       }
